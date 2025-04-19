@@ -1,5 +1,7 @@
 # Use a minimal Python base image
-FROM python:3.10-slim
+FROM python:3.10.13-slim
+# Use the official Python image from Docker Hub
+# https://hub.docker.com/_/python
 
 # Set working directory
 WORKDIR /app
