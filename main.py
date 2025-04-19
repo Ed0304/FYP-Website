@@ -1,3 +1,4 @@
+import os
 from datetime import datetime, timedelta
 from bson.objectid import ObjectId
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -5,26 +6,23 @@ from FYP25S109 import create_app
 from flask_pymongo import PyMongo
 import logging
 
+# Initialize Flask app and Mongo
 app = create_app()
+mongo = PyMongo(app)
 
 # Setup logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Assuming you're using Flask-PyMongo to interact with MongoDB
-mongo = PyMongo(app)
-
-
 def send_assignment_notification():
     logger.debug("Starting the send_assignment_notification function.")
-    
+
     today = datetime.now()
     day_after = today + timedelta(days=1)
     two_days_after = today + timedelta(days=2)
-    
+
     logger.debug(f"Looking for assignments due between {today} and {two_days_after}.")
 
-    # Query to find assignments due in the next 1 or 2 days
     query = {
         "due_date": {
             "$gte": today,
@@ -32,7 +30,6 @@ def send_assignment_notification():
         }
     }
 
-    # Fetch assignments and count
     assignments_cursor = mongo.db.assignments.find(query)
     assignment_count = mongo.db.assignments.count_documents(query)
 
@@ -82,12 +79,15 @@ def send_assignment_notification():
     logger.debug("Finished sending assignment notifications.")
 
 
+# Schedule job as soon as the app starts
+scheduler = BackgroundScheduler()
+scheduler.add_job(func=send_assignment_notification, trigger="cron", hour=13, minute=4)
+scheduler.start()
+logger.debug("Scheduler started and job added.")
 
+
+# Run the app on Cloud Run-compatible host and port
 if __name__ == '__main__':
     logger.info("Starting the Flask app...")
-    # Initialize APScheduler to schedule tasks in the background
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(func=send_assignment_notification, trigger="cron", hour=13, minute=4)  # Run at 3:00 PM every day
-    logger.debug("Scheduler job for sending notifications has been added.")
-    scheduler.start()
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)

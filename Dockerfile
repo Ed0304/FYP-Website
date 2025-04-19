@@ -19,18 +19,17 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY requirements.txt .
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir absl-py==2.1.0
-RUN pip install --no-cache-dir addict==2.4.0
-# Add each dependency as a separate line for debugging
-RUN pip install --no-cache-dir aiofiles==23.2.1
-# Continue with the rest of your dependencies
+COPY requirements.txt .  
+RUN pip install --upgrade pip  
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy app files
 COPY . .
 
-# Set the port for Cloud Run
+# Install Gunicorn for running the app
+RUN pip install --no-cache-dir gunicorn
+
+# Set the port for Cloud Run (8080)
 EXPOSE 8080
 
 # Run the app with Gunicorn (recommended for production)
