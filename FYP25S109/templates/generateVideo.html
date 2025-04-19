@@ -1,0 +1,251 @@
+{% extends "base.html" %}
+{% block title %}Generate Video{% endblock %}
+{% block content %}
+<div class="container py-5">
+  <h2 class="text-center mb-4">🎬 Create Animated Video</h2>
+  <div class="alert alert-danger text-center" id="error-message" style="display: none;"></div>
+
+  <!-- Text + Voice Generation -->
+  <div class="mb-3">
+    <label for="text">Enter Text for Animation (or leave blank if using a saved voice):</label>
+    <textarea id="text" name="text" class="form-control" rows="3"></textarea>
+    <button type="button" id="generateVoice" class="btn btn-warning w-100 my-2">🔊 Generate Voice</button>
+    <audio id="audioPreview" controls style="display:none; width:100%;"></audio>
+    <input type="hidden" id="audio_id" name="audio_id" required>
+  </div>
+
+  <form id="videoForm" class="card p-4 shadow">
+    <!-- Saved Voices -->
+    <div class="mb-3">
+      <label class="form-label">🎵 Select audio from your saved voices:</label>
+      {% if voice_records %}
+        {% for record in voice_records %}
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="audio_choice" value="{{ record.audio_id }}" id="voice{{ loop.index }}">
+            <label class="form-check-label" for="voice{{ loop.index }}">
+              {{ record.text or "Voice " ~ loop.index }}
+            </label>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-danger">No voice records available.</p>
+      {% endif %}
+    </div>
+
+    <!-- Avatars -->
+    <div class="mb-3">
+      <label class="form-label">🖼️ Select an Avatar:</label>
+      <div class="d-flex flex-wrap gap-3">
+        {% if avatars %}
+          {% for avatar in avatars %}
+            <label class="text-center">
+              <input type="radio" name="avatar_id" value="{{ avatar._id }}" required>
+              <img src="data:image/jpeg;base64,{{ avatar.image_data }}" class="img-thumbnail" style="width:100px; height:100px;">
+              <p>{{ avatar.avatarname }}</p>
+            </label>
+          {% endfor %}
+        {% else %}
+          <p class="text-danger">No avatars available.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary w-100">🎥 Generate Video</button>
+
+    <!-- Progress -->
+    <div id="progress-container" style="display:none;" class="mt-3">
+      <label>Video Generation Progress:</label>
+      <div class="progress">
+        <div id="progress-bar" class="progress-bar bg-danger" style="width: 0%;" role="progressbar" aria-valuemin="0" aria-valuemax="100">0%</div>
+      </div>
+      <div id="progress-status" class="text-center mt-2 fw-bold"></div>
+    </div>
+  </form>
+
+  <!-- Video Preview -->
+  <div id="video-preview" class="text-center mt-4"></div>
+
+  <!-- Save Section -->
+  <div id="save-section" class="text-center mt-3" style="display: none;">
+    <button id="saveVideoBtn" class="btn btn-success">💾 Save to My Videos</button>
+    <div id="saveMessage" class="text-info mt-2"></div>
+
+    {% if session["role"] == "Admin" %}
+      <button id="publishBtn" class="btn btn-dark mt-2">📢 Publish to Homepage</button>
+      <div id="publishMessage" class="mt-2 text-success"></div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  const audioIdInput = document.getElementById("audio_id");
+  const audioPreview = document.getElementById("audioPreview");
+  const errorMsg = document.getElementById("error-message");
+  const videoForm = document.getElementById("videoForm");
+  const videoPreview = document.getElementById("video-preview");
+  const progressBar = document.getElementById("progress-bar");
+  const statusLabel = document.getElementById("progress-status");
+  const saveSection = document.getElementById("save-section");
+  const saveButton = document.getElementById("saveVideoBtn");
+  const saveMessage = document.getElementById("saveMessage");
+  const publishButton = document.getElementById("publishBtn");
+  const publishMessage = document.getElementById("publishMessage");
+
+  let lastVideoId = "";            // GridFS ID
+  let lastSavedVideoDocId = "";   // metadata _id
+
+  // Generate Voice
+  document.getElementById("generateVoice").addEventListener("click", function () {
+    const text = document.getElementById("text").value.trim();
+    if (!text) return alert("⚠ Please enter text for voice generation!");
+
+    fetch("/generate_voice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text })
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        audioIdInput.value = data.audio_id;
+        audioPreview.src = `/stream_audio/${data.audio_id}`;
+        audioPreview.style.display = "block";
+
+        document.querySelectorAll("input[name='audio_choice']").forEach(el => el.checked = false);
+      } else {
+        alert("❌ Voice generation failed: " + data.error);
+      }
+    });
+  });
+
+  // Select Saved Voice
+  document.querySelectorAll("input[name='audio_choice']").forEach(radio => {
+    radio.addEventListener("change", function () {
+      audioIdInput.value = this.value;
+      audioPreview.src = `/stream_audio/${this.value}`;
+      audioPreview.style.display = "block";
+    });
+  });
+
+  // Generate Video
+  videoForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+
+    const text = document.getElementById("text").value.trim();
+    const avatar = document.querySelector("input[name='avatar_id']:checked");
+    const audioId = audioIdInput.value;
+
+    if (!audioId || !avatar) {
+      errorMsg.innerText = "❌ Please select an avatar and a voice.";
+      errorMsg.style.display = "block";
+      return;
+    }
+
+    errorMsg.style.display = "none";
+
+    const formData = new FormData();
+    formData.append("text", text);
+    formData.append("audio_id", audioId);
+    formData.append("avatar_id", avatar.value);
+
+    progressBar.style.width = "0%";
+    progressBar.textContent = "0%";
+    progressBar.className = "progress-bar bg-danger";
+    statusLabel.innerText = "⏳ Starting...";
+    document.getElementById("progress-container").style.display = "block";
+
+    fetch("/generate_video", {
+      method: "POST",
+      body: formData
+    })
+    .then(res => res.json())
+    .then(data => {
+      if (data.success) {
+        lastVideoId = data.video_id;
+
+        videoPreview.innerHTML = `
+          <video width="400" controls autoplay>
+            <source src="/stream_video/${data.video_id}" type="video/mp4">
+            Your browser does not support the video tag.
+          </video>`;
+
+        progressBar.style.width = "100%";
+        progressBar.textContent = "100%";
+        progressBar.className = "progress-bar bg-success";
+        statusLabel.innerText = "✅ Completed";
+
+        saveSection.style.display = "block";
+        saveMessage.innerText = "";
+        saveButton.disabled = false;
+        if (publishButton) publishButton.disabled = false;
+      } else {
+        errorMsg.innerText = "❌ " + (data.error || "Video generation failed.");
+        errorMsg.style.display = "block";
+      }
+    })
+    .catch(err => {
+      errorMsg.innerText = "❌ Error: " + err.message;
+      errorMsg.style.display = "block";
+    });
+  });
+
+  // Save Video
+  saveButton.onclick = function () {
+    saveButton.disabled = true;
+
+    const text = document.getElementById("text").value.trim();
+    const avatar = document.querySelector("input[name='avatar_id']:checked");
+
+    fetch("/save_generated_video", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text: text,
+        video_id: lastVideoId,
+        audio_id: audioIdInput.value.trim(),
+        avatar_id: avatar.value
+      })
+    })
+    .then(res => res.json())
+    .then(result => {
+      if (result.success) {
+        lastSavedVideoDocId = result.saved_id;
+        saveMessage.innerText = "✅ Video saved successfully!";
+      } else {
+        saveMessage.innerText = "❌ Failed to save: " + result.error;
+        saveButton.disabled = false;
+      }
+    })
+    .catch(err => {
+      saveMessage.innerText = "❌ Error: " + err.message;
+      saveButton.disabled = false;
+    });
+  };
+
+  // Publish (Admin)
+  if (publishButton) {
+    publishButton.onclick = function () {
+      publishButton.disabled = true;
+
+      fetch("/publish_to_homepage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ video_id: lastSavedVideoDocId })
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          publishMessage.innerText = "✅ Published to homepage!";
+          publishButton.classList.remove("btn-dark");
+          publishButton.classList.add("btn-success");
+        } else {
+          publishMessage.innerText = "❌ Failed to publish: " + data.error;
+          publishButton.disabled = false;
+        }
+      });
+    };
+  }
+});
+</script>
+{% endblock %}
